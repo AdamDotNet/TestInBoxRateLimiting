@@ -1,7 +1,9 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace TestInBoxRateLimiting.Controllers
 {
+	[Authorize(AuthenticationSchemes = "Certificate,S2SAuthentication")]
 	[ApiController]
 	[Route("[controller]")]
 	public class WeatherForecastController : ControllerBase
@@ -20,6 +22,18 @@ namespace TestInBoxRateLimiting.Controllers
 
 		[HttpGet]
 		public IEnumerable<WeatherForecast> Get()
+		{
+			return Enumerable.Range(1, 5).Select(index => new WeatherForecast
+			{
+				Date = DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
+				TemperatureC = Random.Shared.Next(-20, 55),
+				Summary = Summaries[Random.Shared.Next(Summaries.Length)]
+			})
+			.ToArray();
+		}
+
+		[HttpGet("{id}/resource")]
+		public IEnumerable<WeatherForecast> Get(string id)
 		{
 			return Enumerable.Range(1, 5).Select(index => new WeatherForecast
 			{

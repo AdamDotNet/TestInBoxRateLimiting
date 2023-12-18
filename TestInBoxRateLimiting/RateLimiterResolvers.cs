@@ -2,6 +2,7 @@
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Security.Claims;
+using System.Text.RegularExpressions;
 using System.Threading.RateLimiting;
 using Microsoft.Extensions.Options;
 using Microsoft.Net.Http.Headers;
@@ -17,6 +18,13 @@ namespace TestInBoxRateLimiting
 			logger.LogInformation($"Starting rate limit resolver {memberName}.");
 
 			return logger;
+		}
+
+		private static bool IsPathMatch(string requestPath, string policyPath)
+		{
+			// Normalize * to .*? to make it a valid regex.
+			var normalPath = policyPath.Replace(".*?", "*").Replace("*", ".*?");
+			return Regex.IsMatch(requestPath, normalPath, RegexOptions.IgnoreCase);
 		}
 
 		// Test ones for easier verification.
@@ -269,14 +277,21 @@ namespace TestInBoxRateLimiting
 					var userId = $"{tenantId}_{objectId}";
 					if (options.CurrentValue.Policies.TryGetValue(userId, out var policy) && policy.Type == RateLimitPolicyType.UserId)
 					{
-						// TODO: Method and path verification. Idea, the path policy should be parsed into a regex and then matched against the request path.
-						logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: UserId value '{userId}' policy found. Limit: '{policy.Limit}' Window '{policy.Window}'");
-						return RateLimitPartition.GetFixedWindowLimiter(userId, key => new FixedWindowRateLimiterOptions
+						// TODO: A policy can't allow just one method/path combo.
+						if (context.Request.Method.Equals(policy.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(context.Request.Path.Value, policy.Path))
 						{
-							AutoReplenishment = true,
-							PermitLimit = policy.Limit,
-							Window = policy.Window
-						});
+							logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: UserId value '{userId}' policy found. Limit: '{policy.Limit}' Window '{policy.Window}'");
+							return RateLimitPartition.GetFixedWindowLimiter(userId, key => new FixedWindowRateLimiterOptions
+							{
+								AutoReplenishment = true,
+								PermitLimit = policy.Limit,
+								Window = policy.Window
+							});
+						}
+						else
+						{
+							logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: No user id policy found.");
+						}
 					}
 					else
 					{
