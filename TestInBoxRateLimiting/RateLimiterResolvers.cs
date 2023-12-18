@@ -19,21 +19,19 @@ namespace TestInBoxRateLimiting
 
 		private static bool IsPathMatch(HttpContext httpContext, string policyPath)
 		{
-			var requestPath = httpContext.Request.Path.Value;
-			var key = $"__{nameof(IsPathMatch)}__{requestPath}";
+			// Normalize * to .*? and ensure ends with $ to make it a valid regex.
+			// Add $ so root paths don't match sub paths.
+			var normalPath = policyPath.Replace(".*?", "*").Replace("*", ".*?").Replace("$", "") + "$";
 
 			// Do not run the same regex within the same request.
+			var key = $"__{nameof(IsPathMatch)}__{normalPath}";
 			if (httpContext.Items.TryGetValue(key, out var result) && result is bool resultValue)
 			{
 				return resultValue;
 			}
 
-			// Normalize * to .*? and ensure ends with $ to make it a valid regex.
-			// Add $ so root paths don't match sub paths.
-			var normalPath = policyPath.Replace(".*?", "*").Replace("*", ".*?").Replace("$", "") + "$";
-
 			// Make check and cache result for the request.
-			resultValue = Regex.IsMatch(requestPath, normalPath, RegexOptions.IgnoreCase);
+			resultValue = Regex.IsMatch(httpContext.Request.Path.Value, normalPath, RegexOptions.IgnoreCase);
 			httpContext.Items.Add(key, resultValue);
 			return resultValue;
 		}
@@ -53,26 +51,22 @@ namespace TestInBoxRateLimiting
 					// Can we just set the policy name to the certificate Subject instead to avoid that lookup?
 					if (options.CurrentValue.Policies.TryGetValue(subject, out var policy) && policy.Type == RateLimitPolicyType.CertificateName)
 					{
-						// TODO: A policy can't allow just one method/path combo.
-						if (httpContext.Request.Method.Equals(policy.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(httpContext, policy.Path))
+						foreach (var rule in policy.Rules)
 						{
-							logger.LogInformation($"{nameof(ResolveCertificateNameLimiter)}: Client certificate with subject '{subject}' policy found. Method: '{policy.Method}' Path: '{policy.Path}' Limit: '{policy.Limit}' Window '{policy.Window}'");
-							return RateLimitPartition.GetFixedWindowLimiter(subject, key => new FixedWindowRateLimiterOptions
+							if (httpContext.Request.Method.Equals(rule.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(httpContext, rule.Path))
 							{
-								AutoReplenishment = true,
-								PermitLimit = policy.Limit,
-								Window = policy.Window
-							});
-						}
-						else
-						{
-							logger.LogInformation($"{nameof(ResolveCertificateNameLimiter)}: No client certificate policy found.");
+								logger.LogInformation($"{nameof(ResolveCertificateNameLimiter)}: Client certificate with subject '{subject}' policy found. Method: '{rule.Method}' Path: '{rule.Path}' Limit: '{rule.Limit}' Window '{rule.Window}'");
+								return RateLimitPartition.GetFixedWindowLimiter(subject, key => new FixedWindowRateLimiterOptions
+								{
+									AutoReplenishment = true,
+									PermitLimit = rule.Limit,
+									Window = rule.Window
+								});
+							}
 						}
 					}
-					else
-					{
-						logger.LogInformation($"{nameof(ResolveCertificateNameLimiter)}: No client certificate policy found.");
-					}
+
+					logger.LogInformation($"{nameof(ResolveCertificateNameLimiter)}: No client certificate policy found.");
 				}
 				else
 				{
@@ -107,26 +101,22 @@ namespace TestInBoxRateLimiting
 				{
 					if (options.CurrentValue.Policies.TryGetValue(appId, out var policy) && policy.Type == RateLimitPolicyType.AppId)
 					{
-						// TODO: A policy can't allow just one method/path combo.
-						if (httpContext.Request.Method.Equals(policy.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(httpContext, policy.Path))
+						foreach (var rule in policy.Rules)
 						{
-							logger.LogInformation($"{nameof(ResolveAppIdLimiter)}: appid value '{appId}' policy found. Method: '{policy.Method}' Path: '{policy.Path}' Limit: '{policy.Limit}' Window '{policy.Window}'");
-							return RateLimitPartition.GetFixedWindowLimiter(appId, key => new FixedWindowRateLimiterOptions
+							if (httpContext.Request.Method.Equals(rule.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(httpContext, rule.Path))
 							{
-								AutoReplenishment = true,
-								PermitLimit = policy.Limit,
-								Window = policy.Window
-							});
-						}
-						else
-						{
-							logger.LogInformation($"{nameof(ResolveAppIdLimiter)}: No appid policy found.");
+								logger.LogInformation($"{nameof(ResolveAppIdLimiter)}: appid value '{appId}' policy found. Method: '{rule.Method}' Path: '{rule.Path}' Limit: '{rule.Limit}' Window '{rule.Window}'");
+								return RateLimitPartition.GetFixedWindowLimiter(appId, key => new FixedWindowRateLimiterOptions
+								{
+									AutoReplenishment = true,
+									PermitLimit = rule.Limit,
+									Window = rule.Window
+								});
+							}
 						}
 					}
-					else
-					{
-						logger.LogInformation($"{nameof(ResolveAppIdLimiter)}: No appid policy found.");
-					}
+
+					logger.LogInformation($"{nameof(ResolveAppIdLimiter)}: No appid policy found.");
 				}
 				else
 				{
@@ -165,26 +155,22 @@ namespace TestInBoxRateLimiting
 					logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: Found TenantId and ObjectId claims to form userId value '{userId}'.");
 					if (options.CurrentValue.Policies.TryGetValue(userId, out var policy) && policy.Type == RateLimitPolicyType.UserId)
 					{
-						// TODO: A policy can't allow just one method/path combo.
-						if (httpContext.Request.Method.Equals(policy.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(httpContext, policy.Path))
+						foreach (var rule in policy.Rules)
 						{
-							logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: UserId value '{userId}' policy found. Limit: '{policy.Limit}' Window '{policy.Window}'");
-							return RateLimitPartition.GetFixedWindowLimiter(userId, key => new FixedWindowRateLimiterOptions
+							if (httpContext.Request.Method.Equals(rule.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(httpContext, rule.Path))
 							{
-								AutoReplenishment = true,
-								PermitLimit = policy.Limit,
-								Window = policy.Window
-							});
-						}
-						else
-						{
-							logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: No user id policy found.");
+								logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: UserId value '{userId}' policy found. Method: '{rule.Method}' Path: '{rule.Path}' Limit: '{rule.Limit}' Window '{rule.Window}'");
+								return RateLimitPartition.GetFixedWindowLimiter(userId, key => new FixedWindowRateLimiterOptions
+								{
+									AutoReplenishment = true,
+									PermitLimit = rule.Limit,
+									Window = rule.Window
+								});
+							}
 						}
 					}
-					else
-					{
-						logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: No user id policy found.");
-					}
+
+					logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: No user id policy found.");
 				}
 				else
 				{

@@ -22,18 +22,22 @@
 		UserId
 	}
 
-	// What about wild card matching?
-	// What about limiting on an operation name instead of Method/Path?
 	public class RateLimitPolicy
 	{
         public RateLimitPolicyType Type { get; set; }
 
-        public string Method { get; set; }
+		public IEnumerable<RateLimitPolicyRule> Rules { get; set; } = [];
+    }
 
-        public string Path { get; set; }
+	// TODO: If instead of regex, we evaluated against OperationName instead of Method/Path, then we can remove the use of regex, and rules can be dictionary based for faster lookup.
+	public class RateLimitPolicyRule
+	{
+		public string Method { get; set; }
+
+		public string Path { get; set; }
 
 		public int Limit { get; set; }
 
 		public TimeSpan Window { get; set; }
-    }
+	}
 }
