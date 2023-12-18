@@ -30,6 +30,7 @@
     }
 
 	// TODO: If instead of regex, we evaluated against OperationName instead of Method/Path, then we can remove the use of regex, and rules can be dictionary based for faster lookup.
+	// I don't know if OperationName is parsed early enough in the request pipeline to be used here, and parsing it again seems to be expensive too.
 	public class RateLimitPolicyRule
 	{
 		public string Method { get; set; }
