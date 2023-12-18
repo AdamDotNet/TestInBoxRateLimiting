@@ -17,22 +17,35 @@ namespace TestInBoxRateLimiting
 			return logger;
 		}
 
-		private static bool IsPathMatch(string requestPath, string policyPath)
+		private static bool IsPathMatch(HttpContext httpContext, string policyPath)
 		{
+			var requestPath = httpContext.Request.Path.Value;
+			var key = $"__{nameof(IsPathMatch)}__{requestPath}";
+
+			// Do not run the same regex within the same request.
+			if (httpContext.Items.TryGetValue(key, out var result) && result is bool resultValue)
+			{
+				return resultValue;
+			}
+
 			// Normalize * to .*? and ensure ends with $ to make it a valid regex.
 			// Add $ so root paths don't match sub paths.
 			var normalPath = policyPath.Replace(".*?", "*").Replace("*", ".*?").Replace("$", "") + "$";
-			return Regex.IsMatch(requestPath, normalPath, RegexOptions.IgnoreCase);
+
+			// Make check and cache result for the request.
+			resultValue = Regex.IsMatch(requestPath, normalPath, RegexOptions.IgnoreCase);
+			httpContext.Items.Add(key, resultValue);
+			return resultValue;
 		}
 
-		public static RateLimitPartition<string> ResolveCertificateNameLimiter(HttpContext context)
+		public static RateLimitPartition<string> ResolveCertificateNameLimiter(HttpContext httpContext)
 		{
-			var logger = context.GetLogger();
-			var options = context.RequestServices.GetRequiredService<IOptionsMonitor<RateLimitOptions>>();
+			var logger = httpContext.GetLogger();
+			var options = httpContext.RequestServices.GetRequiredService<IOptionsMonitor<RateLimitOptions>>();
 
 			if (options.CurrentValue.IsEnabled)
 			{
-				if (context.User.Identity is ClaimsIdentity { IsAuthenticated: true, AuthenticationType: "Certificate" } identity && identity.FindFirst("certificate-subject")?.Value is { Length: > 0 } subject)
+				if (httpContext.User.Identity is ClaimsIdentity { IsAuthenticated: true, AuthenticationType: "Certificate" } identity && identity.FindFirst("certificate-subject")?.Value is { Length: > 0 } subject)
 				{
 					logger.LogInformation($"{nameof(ResolveCertificateNameLimiter)}: Found client certificate with subject '{subject}'.");
 
@@ -41,7 +54,7 @@ namespace TestInBoxRateLimiting
 					if (options.CurrentValue.Policies.TryGetValue(subject, out var policy) && policy.Type == RateLimitPolicyType.CertificateName)
 					{
 						// TODO: A policy can't allow just one method/path combo.
-						if (context.Request.Method.Equals(policy.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(context.Request.Path.Value, policy.Path))
+						if (httpContext.Request.Method.Equals(policy.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(httpContext, policy.Path))
 						{
 							logger.LogInformation($"{nameof(ResolveCertificateNameLimiter)}: Client certificate with subject '{subject}' policy found. Method: '{policy.Method}' Path: '{policy.Path}' Limit: '{policy.Limit}' Window '{policy.Window}'");
 							return RateLimitPartition.GetFixedWindowLimiter(subject, key => new FixedWindowRateLimiterOptions
@@ -75,16 +88,16 @@ namespace TestInBoxRateLimiting
 			return RateLimitPartition.GetNoLimiter(string.Empty);
 		}
 
-		public static RateLimitPartition<string> ResolveAppIdLimiter(HttpContext context)
+		public static RateLimitPartition<string> ResolveAppIdLimiter(HttpContext httpContext)
 		{
-			var logger = context.GetLogger();
-			var options = context.RequestServices.GetRequiredService<IOptionsMonitor<RateLimitOptions>>();
+			var logger = httpContext.GetLogger();
+			var options = httpContext.RequestServices.GetRequiredService<IOptionsMonitor<RateLimitOptions>>();
 
 			if (options.CurrentValue.IsEnabled)
 			{
 				string appId = null;
 				// NOTE: not checking authentication type because appId can come from either Certificate or S2SAuthentication.
-				if (context.User.Identity is ClaimsIdentity { IsAuthenticated: true } identity)
+				if (httpContext.User.Identity is ClaimsIdentity { IsAuthenticated: true } identity)
 				{
 					logger.LogInformation($"{nameof(ResolveAppIdLimiter)}: Found authenticated identity, searching claims for appid.");
 					appId = identity.FindFirst("appid")?.Value;
@@ -95,7 +108,7 @@ namespace TestInBoxRateLimiting
 					if (options.CurrentValue.Policies.TryGetValue(appId, out var policy) && policy.Type == RateLimitPolicyType.AppId)
 					{
 						// TODO: A policy can't allow just one method/path combo.
-						if (context.Request.Method.Equals(policy.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(context.Request.Path.Value, policy.Path))
+						if (httpContext.Request.Method.Equals(policy.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(httpContext, policy.Path))
 						{
 							logger.LogInformation($"{nameof(ResolveAppIdLimiter)}: appid value '{appId}' policy found. Method: '{policy.Method}' Path: '{policy.Path}' Limit: '{policy.Limit}' Window '{policy.Window}'");
 							return RateLimitPartition.GetFixedWindowLimiter(appId, key => new FixedWindowRateLimiterOptions
@@ -129,17 +142,17 @@ namespace TestInBoxRateLimiting
 			return RateLimitPartition.GetNoLimiter(string.Empty);
 		}
 
-		public static RateLimitPartition<string> ResolveUserIdLimiter(HttpContext context)
+		public static RateLimitPartition<string> ResolveUserIdLimiter(HttpContext httpContext)
 		{
-			var logger = context.GetLogger();
-			var options = context.RequestServices.GetRequiredService<IOptionsMonitor<RateLimitOptions>>();
+			var logger = httpContext.GetLogger();
+			var options = httpContext.RequestServices.GetRequiredService<IOptionsMonitor<RateLimitOptions>>();
 
 			if (options.CurrentValue.IsEnabled)
 			{
 				string objectId = null;
 				string tenantId = null;
 
-				if (context.User.Identity is ClaimsIdentity { IsAuthenticated: true, AuthenticationType: "Certificate" } identity)
+				if (httpContext.User.Identity is ClaimsIdentity { IsAuthenticated: true, AuthenticationType: "Certificate" } identity)
 				{
 					logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: Found authenticated identity, searching claims for TenantId and ObjectId.");
 					tenantId = identity.FindFirst("x-ms-client-tenant-id")?.Value;
@@ -153,7 +166,7 @@ namespace TestInBoxRateLimiting
 					if (options.CurrentValue.Policies.TryGetValue(userId, out var policy) && policy.Type == RateLimitPolicyType.UserId)
 					{
 						// TODO: A policy can't allow just one method/path combo.
-						if (context.Request.Method.Equals(policy.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(context.Request.Path.Value, policy.Path))
+						if (httpContext.Request.Method.Equals(policy.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(httpContext, policy.Path))
 						{
 							logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: UserId value '{userId}' policy found. Limit: '{policy.Limit}' Window '{policy.Window}'");
 							return RateLimitPartition.GetFixedWindowLimiter(userId, key => new FixedWindowRateLimiterOptions
