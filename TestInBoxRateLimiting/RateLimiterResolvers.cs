@@ -57,7 +57,7 @@ namespace TestInBoxRateLimiting
 							{
 								logger.LogInformation($"{nameof(ResolveCertificateNameLimiter)}: Client certificate with subject '{subject}' policy found. Method: '{rule.Method}' Path: '{rule.Path}' Limit: '{rule.Limit}' Window '{rule.Window}'");
 
-								var key = $"{subject}__{rule.Method}__{rule.Path}";
+								var key = HashCode.Combine(subject, rule.Method, rule.Path, rule.Limit, rule.Window).ToString();
 								return RateLimitPartition.GetFixedWindowLimiter(key, key => new FixedWindowRateLimiterOptions
 								{
 									AutoReplenishment = true,
@@ -109,7 +109,7 @@ namespace TestInBoxRateLimiting
 							{
 								logger.LogInformation($"{nameof(ResolveAppIdLimiter)}: appid value '{appId}' policy found. Method: '{rule.Method}' Path: '{rule.Path}' Limit: '{rule.Limit}' Window '{rule.Window}'");
 
-								var key = $"{appId}__{rule.Method}__{rule.Path}";
+								var key = HashCode.Combine(appId, rule.Method, rule.Path, rule.Limit, rule.Window).ToString();
 								return RateLimitPartition.GetFixedWindowLimiter(key, key => new FixedWindowRateLimiterOptions
 								{
 									AutoReplenishment = true,
@@ -165,7 +165,7 @@ namespace TestInBoxRateLimiting
 							{
 								logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: UserId value '{userId}' policy found. Method: '{rule.Method}' Path: '{rule.Path}' Limit: '{rule.Limit}' Window '{rule.Window}'");
 
-								var key = $"{userId}__{rule.Method}__{rule.Path}";
+								var key = HashCode.Combine(userId, rule.Method, rule.Path, rule.Limit, rule.Window).ToString();
 								return RateLimitPartition.GetFixedWindowLimiter(key, key => new FixedWindowRateLimiterOptions
 								{
 									AutoReplenishment = true,
