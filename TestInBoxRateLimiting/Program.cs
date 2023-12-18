@@ -24,6 +24,7 @@ namespace TestInBoxRateLimiting
 
 			// Add options. to the container.
 			builder.Services.Configure<RateLimitOptions>(builder.Configuration.GetSection("RateLimit"));
+			// Dummy implementations of authentication, just used to test out creating RateLimitPartitions based on the request details.
 			builder.Services.AddAuthentication(CertificateAuthenticationDefaults.AuthenticationScheme)
 				.AddCertificate(certOptions =>
 				{
