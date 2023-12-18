@@ -127,8 +127,7 @@ namespace TestInBoxRateLimiting
 				// Now create a rate limiter that can inspect the HttpContext to determine the key.
 				rateLimitOptions.GlobalLimiter = PartitionedRateLimiter.CreateChained(
 					PartitionedRateLimiter.Create<HttpContext, string>(RateLimiterResolvers.ResolveCertificateNameLimiter, StringComparer.OrdinalIgnoreCase),
-					PartitionedRateLimiter.Create<HttpContext, string>(RateLimiterResolvers.ResolveArmAppIdLimiter, StringComparer.OrdinalIgnoreCase),
-					PartitionedRateLimiter.Create<HttpContext, string>(RateLimiterResolvers.ResolveS2SAppIdLimiter, StringComparer.OrdinalIgnoreCase),
+					PartitionedRateLimiter.Create<HttpContext, string>(RateLimiterResolvers.ResolveAppIdLimiter, StringComparer.OrdinalIgnoreCase),
 					PartitionedRateLimiter.Create<HttpContext, string>(RateLimiterResolvers.ResolveUserIdLimiter, StringComparer.OrdinalIgnoreCase));
 			});
 

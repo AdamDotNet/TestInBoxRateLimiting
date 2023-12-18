@@ -75,7 +75,7 @@ namespace TestInBoxRateLimiting
 			return RateLimitPartition.GetNoLimiter(string.Empty);
 		}
 
-		public static RateLimitPartition<string> ResolveArmAppIdLimiter(HttpContext context)
+		public static RateLimitPartition<string> ResolveAppIdLimiter(HttpContext context)
 		{
 			var logger = context.GetLogger();
 			var options = context.RequestServices.GetRequiredService<IOptionsMonitor<RateLimitOptions>>();
@@ -83,9 +83,10 @@ namespace TestInBoxRateLimiting
 			if (options.CurrentValue.IsEnabled)
 			{
 				string appId = null;
-				if (context.User.Identity is ClaimsIdentity { IsAuthenticated: true, AuthenticationType: "Certificate" } identity)
+				// NOTE: not checking authentication type because appId can come from either Certificate or S2SAuthentication.
+				if (context.User.Identity is ClaimsIdentity { IsAuthenticated: true } identity)
 				{
-					logger.LogInformation($"{nameof(ResolveS2SAppIdLimiter)}: Found authenticated identity, searching claims for appid.");
+					logger.LogInformation($"{nameof(ResolveAppIdLimiter)}: Found authenticated identity, searching claims for appid.");
 					appId = identity.FindFirst("appid")?.Value;
 				}
 
@@ -96,7 +97,7 @@ namespace TestInBoxRateLimiting
 						// TODO: A policy can't allow just one method/path combo.
 						if (context.Request.Method.Equals(policy.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(context.Request.Path.Value, policy.Path))
 						{
-							logger.LogInformation($"{nameof(ResolveArmAppIdLimiter)}: appid value '{appId}' policy found. Method: '{policy.Method}' Path: '{policy.Path}' Limit: '{policy.Limit}' Window '{policy.Window}'");
+							logger.LogInformation($"{nameof(ResolveAppIdLimiter)}: appid value '{appId}' policy found. Method: '{policy.Method}' Path: '{policy.Path}' Limit: '{policy.Limit}' Window '{policy.Window}'");
 							return RateLimitPartition.GetFixedWindowLimiter(appId, key => new FixedWindowRateLimiterOptions
 							{
 								AutoReplenishment = true,
@@ -106,79 +107,25 @@ namespace TestInBoxRateLimiting
 						}
 						else
 						{
-							logger.LogInformation($"{nameof(ResolveS2SAppIdLimiter)}: No appid policy found.");
+							logger.LogInformation($"{nameof(ResolveAppIdLimiter)}: No appid policy found.");
 						}
 					}
 					else
 					{
-						logger.LogInformation($"{nameof(ResolveArmAppIdLimiter)}: No appid policy found.");
+						logger.LogInformation($"{nameof(ResolveAppIdLimiter)}: No appid policy found.");
 					}
 				}
 				else
 				{
-					logger.LogInformation($"{nameof(ResolveArmAppIdLimiter)}: No appid found.");
+					logger.LogInformation($"{nameof(ResolveAppIdLimiter)}: No appid found.");
 				}
 			}
 			else
 			{
-				logger.LogInformation($"{nameof(ResolveArmAppIdLimiter)}: Rate limiting is not enabled.");
+				logger.LogInformation($"{nameof(ResolveAppIdLimiter)}: Rate limiting is not enabled.");
 			}
 
 			// Else no limit.
-			return RateLimitPartition.GetNoLimiter(string.Empty);
-		}
-
-		public static RateLimitPartition<string> ResolveS2SAppIdLimiter(HttpContext context)
-		{
-			var logger = context.GetLogger();
-			var options = context.RequestServices.GetRequiredService<IOptionsMonitor<RateLimitOptions>>();
-
-			if (options.CurrentValue.IsEnabled)
-			{
-				string appId = null;
-				if (context.User.Identity is ClaimsIdentity { IsAuthenticated: true, AuthenticationType: "S2SAuthentication" } identity)
-				{
-					logger.LogInformation($"{nameof(ResolveS2SAppIdLimiter)}: Found authenticated identity, searching claims for appid.");
-					appId = identity.FindFirst("appid")?.Value;
-				}
-
-				if (!string.IsNullOrWhiteSpace(appId))
-				{
-					logger.LogInformation($"{nameof(ResolveS2SAppIdLimiter)}: Found appid claim from S2S authorization header with value '{appId}'.");
-					if (options.CurrentValue.Policies.TryGetValue(appId, out var policy) && policy.Type == RateLimitPolicyType.AppId)
-					{
-						// TODO: A policy can't allow just one method/path combo.
-						if (context.Request.Method.Equals(policy.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(context.Request.Path.Value, policy.Path))
-						{
-							logger.LogInformation($"{nameof(ResolveArmAppIdLimiter)}: appid value '{appId}' policy found. Method: '{policy.Method}' Path: '{policy.Path}' Limit: '{policy.Limit}' Window '{policy.Window}'");
-							return RateLimitPartition.GetFixedWindowLimiter(appId, key => new FixedWindowRateLimiterOptions
-							{
-								AutoReplenishment = true,
-								PermitLimit = policy.Limit,
-								Window = policy.Window
-							});
-						}
-						else
-						{
-							logger.LogInformation($"{nameof(ResolveS2SAppIdLimiter)}: No appid policy found.");
-						}
-					}
-					else
-					{
-						logger.LogInformation($"{nameof(ResolveS2SAppIdLimiter)}: No appid policy found.");
-					}
-				}
-				else
-				{
-					logger.LogInformation($"{nameof(ResolveS2SAppIdLimiter)}: No appid found.");
-				}
-			}
-			else
-			{
-				logger.LogInformation($"{nameof(ResolveS2SAppIdLimiter)}: Rate limiting is not enabled.");
-			}
-
-			// Else no match.
 			return RateLimitPartition.GetNoLimiter(string.Empty);
 		}
 
