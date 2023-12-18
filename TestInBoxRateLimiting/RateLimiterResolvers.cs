@@ -56,7 +56,9 @@ namespace TestInBoxRateLimiting
 							if (httpContext.Request.Method.Equals(rule.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(httpContext, rule.Path))
 							{
 								logger.LogInformation($"{nameof(ResolveCertificateNameLimiter)}: Client certificate with subject '{subject}' policy found. Method: '{rule.Method}' Path: '{rule.Path}' Limit: '{rule.Limit}' Window '{rule.Window}'");
-								return RateLimitPartition.GetFixedWindowLimiter(subject, key => new FixedWindowRateLimiterOptions
+
+								var key = $"{subject}__{rule.Method}__{rule.Path}";
+								return RateLimitPartition.GetFixedWindowLimiter(key, key => new FixedWindowRateLimiterOptions
 								{
 									AutoReplenishment = true,
 									PermitLimit = rule.Limit,
@@ -106,7 +108,9 @@ namespace TestInBoxRateLimiting
 							if (httpContext.Request.Method.Equals(rule.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(httpContext, rule.Path))
 							{
 								logger.LogInformation($"{nameof(ResolveAppIdLimiter)}: appid value '{appId}' policy found. Method: '{rule.Method}' Path: '{rule.Path}' Limit: '{rule.Limit}' Window '{rule.Window}'");
-								return RateLimitPartition.GetFixedWindowLimiter(appId, key => new FixedWindowRateLimiterOptions
+
+								var key = $"{appId}__{rule.Method}__{rule.Path}";
+								return RateLimitPartition.GetFixedWindowLimiter(key, key => new FixedWindowRateLimiterOptions
 								{
 									AutoReplenishment = true,
 									PermitLimit = rule.Limit,
@@ -160,7 +164,9 @@ namespace TestInBoxRateLimiting
 							if (httpContext.Request.Method.Equals(rule.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(httpContext, rule.Path))
 							{
 								logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: UserId value '{userId}' policy found. Method: '{rule.Method}' Path: '{rule.Path}' Limit: '{rule.Limit}' Window '{rule.Window}'");
-								return RateLimitPartition.GetFixedWindowLimiter(userId, key => new FixedWindowRateLimiterOptions
+
+								var key = $"{userId}__{rule.Method}__{rule.Path}";
+								return RateLimitPartition.GetFixedWindowLimiter(key, key => new FixedWindowRateLimiterOptions
 								{
 									AutoReplenishment = true,
 									PermitLimit = rule.Limit,
