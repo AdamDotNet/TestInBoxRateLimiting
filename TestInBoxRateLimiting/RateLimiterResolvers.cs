@@ -5,9 +5,22 @@ using Microsoft.Extensions.Options;
 
 namespace TestInBoxRateLimiting
 {
+	// TODO: for each resolver, support wildcard "identities" (e.g. * for appid, * for userId, * for certificate subject).
+	// A more specific identity should take precedence over a wildcard.
+	// TODO: Support wildcard operation names.
+	// A more specific operation name should take precedence over a wildcard.
+	// 1. Is there a matching identity?
+	// 2. Is there a matching operation name for the matched identity?
+	// 3. Is there a wildcard operation name for the matched identity?
+	// 4. Is there a wildcard identity?
+	// 5. Is there a matching operation name for the wildcard identity?
+	// 6. Is there a wildcard operation name for the wildcard identity?
+	// Ensure all lookups are still hash based for efficiency.
+	// Reduce code duplication as much as possible.
 	public static class RateLimiterResolvers
 	{
-		public const string OperationNameKey = "__OperationName";
+		public const string OperationNameKey = "__RateLimiting__OperationName";
+		public const string IdentitiesKey = "__RateLimiting__Identities";
 
 		private static ILogger GetLogger(this HttpContext context, [CallerMemberName] string memberName = null)
 		{
@@ -33,8 +46,10 @@ namespace TestInBoxRateLimiting
 					{
 						if (policy.TryGetValue(operationName, out var rule))
 						{
-							logger.LogInformation($"{nameof(ResolveCertificateNameLimiter)}: Client certificate with subject '{subject}' policy found. Method: '{rule.Method}' Path: '{rule.Path}' Limit: '{rule.Limit}' Window '{rule.Window}'");
-							var key = rule.CreatePartitionKey(subject);
+							logger.LogInformation($"{nameof(ResolveCertificateNameLimiter)}: Client certificate with subject '{subject}' policy found. OperationName: '{operationName}' Limit: '{rule.Limit}' Window '{rule.Window}'");
+							((HashSet<string>)httpContext.Items[IdentitiesKey]).Add(subject);
+
+							var key = rule.CreatePartitionKey(subject, operationName);
 							return RateLimitPartition.GetFixedWindowLimiter(key, key => new FixedWindowRateLimiterOptions
 							{
 								AutoReplenishment = true,
@@ -78,13 +93,15 @@ namespace TestInBoxRateLimiting
 
 				if (!string.IsNullOrWhiteSpace(appId))
 				{
-					if (options.CurrentValue.Policies.TryGetValue(appId, out var policy))
+					var policyKey = $"AppId={appId}";
+					if (options.CurrentValue.Policies.TryGetValue(policyKey, out var policy))
 					{
 						if (policy.TryGetValue(operationName, out var rule))
 						{
-							logger.LogInformation($"{nameof(ResolveAppIdLimiter)}: appid value '{appId}' policy found. Method: '{rule.Method}' Path: '{rule.Path}' Limit: '{rule.Limit}' Window '{rule.Window}'");
+							logger.LogInformation($"{nameof(ResolveAppIdLimiter)}: appid value '{appId}' policy found. OperationName: '{operationName}' Limit: '{rule.Limit}' Window '{rule.Window}'");
+							((HashSet<string>)httpContext.Items[IdentitiesKey]).Add(policyKey);
 
-							var key = rule.CreatePartitionKey(appId);
+							var key = rule.CreatePartitionKey(appId, operationName);
 							return RateLimitPartition.GetFixedWindowLimiter(key, key => new FixedWindowRateLimiterOptions
 							{
 								AutoReplenishment = true,
@@ -121,7 +138,8 @@ namespace TestInBoxRateLimiting
 				string objectId = null;
 				string tenantId = null;
 
-				if (httpContext.User.Identity is ClaimsIdentity { IsAuthenticated: true, AuthenticationType: "Certificate" } identity)
+				// NOTE: not checking authentication type because userId can come from either Certificate or S2SAuthentication.
+				if (httpContext.User.Identity is ClaimsIdentity { IsAuthenticated: true } identity)
 				{
 					logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: Found authenticated identity, searching claims for TenantId and ObjectId.");
 					tenantId = identity.FindFirst("x-ms-client-tenant-id")?.Value;
@@ -132,13 +150,15 @@ namespace TestInBoxRateLimiting
 				{
 					var userId = $"{tenantId}_{objectId}";
 					logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: Found TenantId and ObjectId claims to form userId value '{userId}'.");
-					if (options.CurrentValue.Policies.TryGetValue(userId, out var policy))
+					var policyKey = $"UserId={userId}";
+					if (options.CurrentValue.Policies.TryGetValue(policyKey, out var policy))
 					{
 						if (policy.TryGetValue(operationName, out var rule))
 						{
-							logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: UserId value '{userId}' policy found. Method: '{rule.Method}' Path: '{rule.Path}' Limit: '{rule.Limit}' Window '{rule.Window}'");
+							logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: UserId value '{userId}' policy found. OperationName: ' {operationName}' Limit: '{rule.Limit}' Window '{rule.Window}'");
+							((HashSet<string>)httpContext.Items[IdentitiesKey]).Add(policyKey);
 
-							var key = rule.CreatePartitionKey(userId);
+							var key = rule.CreatePartitionKey(userId, operationName);
 							return RateLimitPartition.GetFixedWindowLimiter(key, key => new FixedWindowRateLimiterOptions
 							{
 								AutoReplenishment = true,

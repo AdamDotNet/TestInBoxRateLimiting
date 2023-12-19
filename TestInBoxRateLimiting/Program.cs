@@ -98,6 +98,8 @@ namespace TestInBoxRateLimiting
 
 							context.Principal = new ClaimsPrincipal(new ClaimsIdentity("S2SAuthentication"));
 							var identity = (ClaimsIdentity)context.Principal.Identity;
+							identity.AddClaim(new Claim("x-ms-client-object-id", context.Request.Headers["x-ms-client-object-id"].ToString()));
+							identity.AddClaim(new Claim("x-ms-client-tenant-id", context.Request.Headers["x-ms-client-tenant-id"].ToString()));
 
 							if (context.HttpContext.Request.Headers.TryGetValue(HeaderNames.Authorization, out var authorization) && AuthenticationHeaderValue.TryParse(authorization, out var parsedAuthorization))
 							{
@@ -147,7 +149,9 @@ namespace TestInBoxRateLimiting
 				}
 
 				operationName = operationName.Replace("//", "/");
+				// TODO: we should probably have HttpContext extensions that abstracts away the casting and the key names everywhere.
 				httpContext.Items.Add(RateLimiterResolvers.OperationNameKey, operationName);
+				httpContext.Items.Add(RateLimiterResolvers.IdentitiesKey, new HashSet<string>());
 
 				return next(httpContext);
 			});
@@ -176,10 +180,9 @@ namespace TestInBoxRateLimiting
 			var loggerFactory = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>();
 			var logger = loggerFactory.CreateLogger(nameof(RateLimiterResolvers));
 
-			context.HttpContext.Items.TryGetValue(RateLimiterResolvers.OperationNameKey, out var operationNameObj);
-			var operationName = operationNameObj?.ToString() ?? "Unknown";
-			// TODO: Log the partition key - but it's not always clear which resolver caused the rate limit in case a single request matches multiple resolvers.
-			logger.LogInformation($"Rate limited request '{operationName}'.");
+			var operationName = context.HttpContext.Items[RateLimiterResolvers.OperationNameKey] as string;
+			var identities = context.HttpContext.Items[RateLimiterResolvers.IdentitiesKey] as HashSet<string>;
+			logger.LogInformation($"Rate limited request '{operationName}'. Matched identities: {string.Join(", ", identities)}");
 
 			if (!context.HttpContext.Response.HasStarted && context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
 			{
