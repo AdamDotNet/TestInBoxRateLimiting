@@ -1,6 +1,5 @@
 ﻿using System.Runtime.CompilerServices;
 using System.Security.Claims;
-using System.Text.RegularExpressions;
 using System.Threading.RateLimiting;
 using Microsoft.Extensions.Options;
 
@@ -8,6 +7,8 @@ namespace TestInBoxRateLimiting
 {
 	public static class RateLimiterResolvers
 	{
+		public const string OperationNameKey = "__OperationName";
+
 		private static ILogger GetLogger(this HttpContext context, [CallerMemberName] string memberName = null)
 		{
 			var loggerFactory = context.RequestServices.GetRequiredService<ILoggerFactory>();
@@ -17,54 +18,29 @@ namespace TestInBoxRateLimiting
 			return logger;
 		}
 
-		private static bool IsPathMatch(HttpContext httpContext, string policyPath)
-		{
-			// Normalize * to .*? and ensure ends with $ to make it a valid regex.
-			// Add $ so root paths don't match sub paths.
-			var normalPath = policyPath.Replace(".*?", "*").Replace("*", ".*?").Replace("$", "") + "$";
-
-			// Do not run the same regex within the same request.
-			var key = $"__{nameof(IsPathMatch)}__{normalPath}";
-			if (httpContext.Items.TryGetValue(key, out var result) && result is bool resultValue)
-			{
-				return resultValue;
-			}
-
-			// Make check and cache result for the request.
-			resultValue = Regex.IsMatch(httpContext.Request.Path.Value, normalPath, RegexOptions.IgnoreCase);
-			httpContext.Items.Add(key, resultValue);
-			return resultValue;
-		}
-
 		public static RateLimitPartition<string> ResolveCertificateNameLimiter(HttpContext httpContext)
 		{
 			var logger = httpContext.GetLogger();
 			var options = httpContext.RequestServices.GetRequiredService<IOptionsMonitor<RateLimitOptions>>();
 
-			if (options.CurrentValue.IsEnabled)
+			if (options.CurrentValue.IsEnabled && httpContext.Items.TryGetValue(OperationNameKey, out var operationNameObj))
 			{
+				var operationName = operationNameObj.ToString();
 				if (httpContext.User.Identity is ClaimsIdentity { IsAuthenticated: true, AuthenticationType: "Certificate" } identity && identity.FindFirst("certificate-subject")?.Value is { Length: > 0 } subject)
 				{
 					logger.LogInformation($"{nameof(ResolveCertificateNameLimiter)}: Found client certificate with subject '{subject}'.");
-
-					// TODO: Service Extensions also checks if the certificate is defined in ICertificateRepository. This is so that the policy can be created by certificate name, and then matched by name here.
-					// Can we just set the policy name to the certificate Subject instead to avoid that lookup?
-					if (options.CurrentValue.Policies.TryGetValue(subject, out var policy) && policy.Type == RateLimitPolicyType.CertificateName)
+					if (options.CurrentValue.Policies.TryGetValue(subject, out var policy))
 					{
-						foreach (var rule in policy.Rules)
+						if (policy.TryGetValue(operationName, out var rule))
 						{
-							if (httpContext.Request.Method.Equals(rule.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(httpContext, rule.Path))
+							logger.LogInformation($"{nameof(ResolveCertificateNameLimiter)}: Client certificate with subject '{subject}' policy found. Method: '{rule.Method}' Path: '{rule.Path}' Limit: '{rule.Limit}' Window '{rule.Window}'");
+							var key = rule.CreatePartitionKey(subject);
+							return RateLimitPartition.GetFixedWindowLimiter(key, key => new FixedWindowRateLimiterOptions
 							{
-								logger.LogInformation($"{nameof(ResolveCertificateNameLimiter)}: Client certificate with subject '{subject}' policy found. Method: '{rule.Method}' Path: '{rule.Path}' Limit: '{rule.Limit}' Window '{rule.Window}'");
-
-								var key = HashCode.Combine(subject, rule.Method, rule.Path, rule.Limit, rule.Window).ToString();
-								return RateLimitPartition.GetFixedWindowLimiter(key, key => new FixedWindowRateLimiterOptions
-								{
-									AutoReplenishment = true,
-									PermitLimit = rule.Limit,
-									Window = rule.Window
-								});
-							}
+								AutoReplenishment = true,
+								PermitLimit = rule.Limit,
+								Window = rule.Window
+							});
 						}
 					}
 
@@ -89,8 +65,9 @@ namespace TestInBoxRateLimiting
 			var logger = httpContext.GetLogger();
 			var options = httpContext.RequestServices.GetRequiredService<IOptionsMonitor<RateLimitOptions>>();
 
-			if (options.CurrentValue.IsEnabled)
+			if (options.CurrentValue.IsEnabled && httpContext.Items.TryGetValue(OperationNameKey, out var operationNameObj))
 			{
+				var operationName = operationNameObj.ToString();
 				string appId = null;
 				// NOTE: not checking authentication type because appId can come from either Certificate or S2SAuthentication.
 				if (httpContext.User.Identity is ClaimsIdentity { IsAuthenticated: true } identity)
@@ -101,22 +78,19 @@ namespace TestInBoxRateLimiting
 
 				if (!string.IsNullOrWhiteSpace(appId))
 				{
-					if (options.CurrentValue.Policies.TryGetValue(appId, out var policy) && policy.Type == RateLimitPolicyType.AppId)
+					if (options.CurrentValue.Policies.TryGetValue(appId, out var policy))
 					{
-						foreach (var rule in policy.Rules)
+						if (policy.TryGetValue(operationName, out var rule))
 						{
-							if (httpContext.Request.Method.Equals(rule.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(httpContext, rule.Path))
-							{
-								logger.LogInformation($"{nameof(ResolveAppIdLimiter)}: appid value '{appId}' policy found. Method: '{rule.Method}' Path: '{rule.Path}' Limit: '{rule.Limit}' Window '{rule.Window}'");
+							logger.LogInformation($"{nameof(ResolveAppIdLimiter)}: appid value '{appId}' policy found. Method: '{rule.Method}' Path: '{rule.Path}' Limit: '{rule.Limit}' Window '{rule.Window}'");
 
-								var key = HashCode.Combine(appId, rule.Method, rule.Path, rule.Limit, rule.Window).ToString();
-								return RateLimitPartition.GetFixedWindowLimiter(key, key => new FixedWindowRateLimiterOptions
-								{
-									AutoReplenishment = true,
-									PermitLimit = rule.Limit,
-									Window = rule.Window
-								});
-							}
+							var key = rule.CreatePartitionKey(appId);
+							return RateLimitPartition.GetFixedWindowLimiter(key, key => new FixedWindowRateLimiterOptions
+							{
+								AutoReplenishment = true,
+								PermitLimit = rule.Limit,
+								Window = rule.Window
+							});
 						}
 					}
 
@@ -141,8 +115,9 @@ namespace TestInBoxRateLimiting
 			var logger = httpContext.GetLogger();
 			var options = httpContext.RequestServices.GetRequiredService<IOptionsMonitor<RateLimitOptions>>();
 
-			if (options.CurrentValue.IsEnabled)
+			if (options.CurrentValue.IsEnabled && httpContext.Items.TryGetValue(OperationNameKey, out var operationNameObj))
 			{
+				var operationName = operationNameObj.ToString();
 				string objectId = null;
 				string tenantId = null;
 
@@ -157,22 +132,19 @@ namespace TestInBoxRateLimiting
 				{
 					var userId = $"{tenantId}_{objectId}";
 					logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: Found TenantId and ObjectId claims to form userId value '{userId}'.");
-					if (options.CurrentValue.Policies.TryGetValue(userId, out var policy) && policy.Type == RateLimitPolicyType.UserId)
+					if (options.CurrentValue.Policies.TryGetValue(userId, out var policy))
 					{
-						foreach (var rule in policy.Rules)
+						if (policy.TryGetValue(operationName, out var rule))
 						{
-							if (httpContext.Request.Method.Equals(rule.Method, StringComparison.OrdinalIgnoreCase) && IsPathMatch(httpContext, rule.Path))
-							{
-								logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: UserId value '{userId}' policy found. Method: '{rule.Method}' Path: '{rule.Path}' Limit: '{rule.Limit}' Window '{rule.Window}'");
+							logger.LogInformation($"{nameof(ResolveUserIdLimiter)}: UserId value '{userId}' policy found. Method: '{rule.Method}' Path: '{rule.Path}' Limit: '{rule.Limit}' Window '{rule.Window}'");
 
-								var key = HashCode.Combine(userId, rule.Method, rule.Path, rule.Limit, rule.Window).ToString();
-								return RateLimitPartition.GetFixedWindowLimiter(key, key => new FixedWindowRateLimiterOptions
-								{
-									AutoReplenishment = true,
-									PermitLimit = rule.Limit,
-									Window = rule.Window
-								});
-							}
+							var key = rule.CreatePartitionKey(userId);
+							return RateLimitPartition.GetFixedWindowLimiter(key, key => new FixedWindowRateLimiterOptions
+							{
+								AutoReplenishment = true,
+								PermitLimit = rule.Limit,
+								Window = rule.Window
+							});
 						}
 					}
 

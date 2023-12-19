@@ -35,6 +35,7 @@ namespace TestInBoxRateLimiting
 							var loggerFactory = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>();
 							var logger = loggerFactory.CreateLogger("OnCertificateValidated");
 
+							// NOTE: In our real apps, we have constants for header names.
 							var userToken = context.Request.Headers["x-ms-arm-signed-user-token"].ToString();
 							var objectId = context.Request.Headers["x-ms-client-object-id"].ToString();
 							var tenantId = context.Request.Headers["x-ms-client-tenant-id"].ToString();
@@ -135,6 +136,21 @@ namespace TestInBoxRateLimiting
 			var app = builder.Build();
 
 			// Configure the HTTP request pipeline.
+			app.Use((httpContext, next) =>
+			{
+				// Create stable operation Id.
+				// TODO: Check if the one we already use in real apps happens early enough and can be reused as is.
+				var operationName = $"{httpContext.Request.Method}_{httpContext.Request.Path.Value.TrimStart('/')}";
+				foreach (var (_, value) in httpContext.Request.RouteValues)
+				{
+					operationName = operationName.Replace(value.ToString(), "");
+				}
+
+				operationName = operationName.Replace("//", "/");
+				httpContext.Items.Add(RateLimiterResolvers.OperationNameKey, operationName);
+
+				return next(httpContext);
+			});
 			app.UseAuthentication();
 			app.UseRateLimiter();
 			app.MapControllers();
@@ -157,10 +173,13 @@ namespace TestInBoxRateLimiting
 
 		private static async ValueTask OnRejected(OnRejectedContext context, CancellationToken cancellationToken)
 		{
-			// TODO: What handy info does the context have to log?
 			var loggerFactory = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>();
 			var logger = loggerFactory.CreateLogger(nameof(RateLimiterResolvers));
-			// logger.LogInformation($"Rate limited request {context.Lease.}");
+
+			context.HttpContext.Items.TryGetValue(RateLimiterResolvers.OperationNameKey, out var operationNameObj);
+			var operationName = operationNameObj?.ToString() ?? "Unknown";
+			// TODO: Log the partition key - but it's not always clear which resolver caused the rate limit in case a single request matches multiple resolvers.
+			logger.LogInformation($"Rate limited request '{operationName}'.");
 
 			if (!context.HttpContext.Response.HasStarted && context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
 			{
